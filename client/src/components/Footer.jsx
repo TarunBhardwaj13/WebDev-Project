@@ -12,6 +12,7 @@ export default function Footer() {
           <p className="text-sm text-slate-400 leading-relaxed">
             Exchange skills. Grow together. A modern peer-to-peer barter learning network for students and professionals.
           </p>
+          
         </div>
 
         <div>
