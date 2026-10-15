@@ -7,7 +7,7 @@ export default function Footer() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="space-y-3">
           <span className="text-xl font-black bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent">
-            EXCHIVO
+            Learn Unique
           </span>
           <p className="text-sm text-slate-400 leading-relaxed">
             Exchange skills. Grow together. A modern peer-to-peer barter learning network for students and professionals.
@@ -40,7 +40,7 @@ export default function Footer() {
             Built with React, Tailwind CSS, Express, and MongoDB. Learn by sharing.
           </p>
           <p className="text-xs text-slate-500 mt-4">
-            &copy; {new Date().getFullYear()} EXCHIVO. All rights reserved.
+            &copy; {new Date().getFullYear()} Learn Unique. All rights reserved.
           </p>
         </div>
       </div>

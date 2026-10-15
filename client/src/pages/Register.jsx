@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { User, Mail, Lock, School, MapPin, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function Register() {
+  const PLATFORM_NAME = 'Learn Unique';
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -26,7 +28,7 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!formData.name || !formData.email || !formData.password) {
+    if (!formData.name.trim() || !formData.email.trim() || !formData.password) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -43,16 +45,25 @@ export default function Register() {
 
     try {
       setSubmitting(true);
+      setError('');
       await register({
-        name: formData.name,
-        email: formData.email,
+        name: formData.name.trim(),
+        email: formData.email.trim().toLowerCase(),
         password: formData.password,
-        college: formData.college,
-        location: formData.location,
+        college: formData.college.trim(),
+        location: formData.location.trim(),
       });
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Try a different email.');
+      console.error('Registration full error object:', err);
+
+      const backendMessage =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Registration failed. Please check your details.';
+
+      setError(backendMessage);
     } finally {
       setSubmitting(false);
     }
@@ -63,7 +74,7 @@ export default function Register() {
       <div className="max-w-lg w-full bg-slate-800/70 border border-slate-700/80 rounded-2xl p-8 shadow-2xl backdrop-blur-sm">
         
         <div className="text-center mb-8">
-          <h2 className="text-3xl font-extrabold text-white">Join EXCHIVO</h2>
+          <h2 className="text-3xl font-extrabold text-white">Join {PLATFORM_NAME}</h2>
           <p className="text-sm text-slate-400 mt-2">Start exchanging skills with peers for free</p>
         </div>
 
