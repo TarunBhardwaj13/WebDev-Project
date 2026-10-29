@@ -14,25 +14,26 @@ const app = express();
 // =====================================
 
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
+"http://localhost:5173",
+"http://127.0.0.1:5173",
 ];
 
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests without an Origin header.
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+cors({
+origin: (origin, callback) => {
+if (!origin || allowedOrigins.includes(origin)) {
+return callback(null, true);
+}
+  return callback(
+    new Error(`CORS blocked this origin: ${origin}`)
+  );
+},
+methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+allowedHeaders: ["Content-Type", "Authorization"],
+credentials: true,
 
-      return callback(
-        new Error(`CORS blocked this origin: ${origin}`)
-      );
-    },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
+
+})
 );
 
 // =====================================
@@ -47,14 +48,14 @@ app.use(express.urlencoded({ extended: true }));
 // =====================================
 
 app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Learn Unique API is running!",
-    database:
-      mongoose.connection.readyState === 1
-        ? "Connected"
-        : "Disconnected",
-  });
+res.status(200).json({
+success: true,
+message: "Learn Unique API is running!",
+database:
+mongoose.connection.readyState === 1
+? "Connected"
+: "Disconnected",
+});
 });
 
 // =====================================
@@ -62,63 +63,73 @@ app.get("/", (req, res) => {
 // =====================================
 
 function loadRoute(path, mountPath, routeName) {
-  try {
-    const routes = require(path);
+try {
+const routes = require(path);
 
-    app.use(mountPath, routes);
 
-    console.log(`✅ ${routeName} routes loaded`);
-  } catch (error) {
-    console.error(`❌ ${routeName} routes failed to load:`);
-    console.error(error.message);
+app.use(mountPath, routes);
 
-    // Stop startup if a required route cannot load.
-    throw error;
-  }
+console.log(`✅ ${routeName} routes loaded`);
+
+
+} catch (error) {
+console.error(`❌ ${routeName} routes failed to load:`);
+console.error(error.stack || error.message);
+
+// Stop startup if a required route cannot load.
+throw error;
+
+
+}
 }
 
 // Resources
 loadRoute(
-  "./resources/resourceRoutes",
-  "/api/resources",
-  "Resources"
+"./resources/resourceRoutes",
+"/api/resources",
+"Resources"
 );
 
 // Authentication
 loadRoute(
-  "./routes/authRoutes",
-  "/api/auth",
-  "Auth"
+"./routes/authRoutes",
+"/api/auth",
+"Auth"
 );
 
 // Users
 loadRoute(
-  "./routes/userRoutes",
-  "/api/users",
-  "User"
+"./routes/userRoutes",
+"/api/users",
+"User"
 );
 
 // Requests
 loadRoute(
-  "./routes/requestRoutes",
-  "/api/requests",
-  "Request"
+"./routes/requestRoutes",
+"/api/requests",
+"Request"
 );
 
 // Sessions
 loadRoute(
-  "./routes/sessionRoutes",
-  "/api/sessions",
-  "Session"
+"./routes/sessionRoutes",
+"/api/sessions",
+"Session"
 );
 
 // Matches
-// This requires server/routes/matchRoutes.js to exist.
-// The file must export an Express router.
 loadRoute(
-  "./routes/matchRoutes",
-  "/api/matches",
-  "Matches"
+"./routes/matchRoutes",
+"/api/matches",
+"Matches"
+);
+
+// Admin
+loadRoute(
+"./routes/adminRoutes",
+"/api/admin",
+"Admin"
 );
 
 // =====================================
@@ -126,10 +137,10 @@ loadRoute(
 // =====================================
 
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `Route not found: ${req.method} ${req.originalUrl}`,
-  });
+res.status(404).json({
+success: false,
+message: `Route not found: ${req.method} ${req.originalUrl}`,
+});
 });
 
 // =====================================
@@ -137,33 +148,33 @@ app.use((req, res) => {
 // =====================================
 
 app.use((err, req, res, next) => {
-  console.error("Server Error:", err.message);
+console.error("Server Error:", err.message);
 
-  if (
-    err instanceof SyntaxError &&
-    err.status === 400 &&
-    "body" in err
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid JSON request body",
-    });
-  }
+if (
+err instanceof SyntaxError &&
+err.status === 400 &&
+"body" in err
+) {
+return res.status(400).json({
+success: false,
+message: "Invalid JSON request body",
+});
+}
 
-  if (err.message.startsWith("CORS blocked")) {
-    return res.status(403).json({
-      success: false,
-      message: "Request origin is not allowed",
-    });
-  }
+if (err.message.startsWith("CORS blocked")) {
+return res.status(403).json({
+success: false,
+message: "Request origin is not allowed",
+});
+}
 
-  res.status(err.status || 500).json({
-    success: false,
-    message:
-      process.env.NODE_ENV === "production"
-        ? "Internal server error"
-        : err.message || "Something went wrong",
-  });
+return res.status(err.status || 500).json({
+success: false,
+message:
+process.env.NODE_ENV === "production"
+? "Internal server error"
+: err.message || "Something went wrong",
+});
 });
 
 // =====================================
@@ -173,37 +184,32 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
-  const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI;
 
-  if (!MONGO_URI) {
-    console.error(
-      "❌ MONGO_URI is missing from the .env file."
-    );
+if (!MONGO_URI) {
+console.error("❌ MONGO_URI is missing from the .env file.");
+process.exit(1);
+}
 
-    process.exit(1);
-  }
+try {
+console.log("Connecting to MongoDB Atlas...");
 
-  try {
-    console.log("Connecting to MongoDB Atlas...");
+await mongoose.connect(MONGO_URI);
 
-    await mongoose.connect(MONGO_URI);
+console.log("✅ MongoDB Connected Successfully!");
 
-    console.log("✅ MongoDB Connected Successfully!");
-
-    app.listen(PORT, () => {
-      console.log(
-        `🚀 Server running at http://localhost:${PORT}`
-      );
-
-      console.log(
-        "🌐 Frontend origin: http://localhost:5173"
-      );
-    });
-  } catch (error) {
-    console.error("❌ Startup failed:", error.message);
-
-    process.exit(1);
-  }
+app.listen(PORT, () => {
+  console.log("-----------------------------------");
+  console.log("🚀 Learn Unique Server Started");
+  console.log(`🚀 Server: http://localhost:${PORT}`);
+  console.log("🌐 Frontend: http://localhost:5173");
+  console.log("✅ Admin API: /api/admin");
+  console.log("-----------------------------------");
+});
+} catch (error) {
+console.error("❌ Startup failed:", error.message);
+process.exit(1);
+}
 }
 
 startServer();

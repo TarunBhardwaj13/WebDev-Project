@@ -1,114 +1,338 @@
-const Request = require('../models/Request');
-const User = require('../models/User');
+const mongoose = require("mongoose");
+const Request = require("../models/Request");
+const User = require("../models/User");
+
+// ============================================
+// 1. SEND SKILL EXCHANGE REQUEST
+// POST /api/requests
+// ============================================
 
 exports.sendRequest = async (req, res) => {
   try {
-    const { receiverId, skillOffered, skillWanted, message } = req.body;
+    const {
+      receiverId,
+      skillOffered,
+      skillWanted,
+      message,
+    } = req.body;
+
+    const senderId = req.user?._id;
+
+    if (!senderId) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to send a request.",
+      });
+    }
 
     if (!receiverId || !skillOffered || !skillWanted) {
       return res.status(400).json({
         success: false,
-        message: 'receiverId, skillOffered, aur skillWanted zaroori hain'
+        message:
+          "Receiver, offered skill, and wanted skill are required.",
       });
     }
 
-    if (receiverId.toString() === req.user._id.toString()) {
+    if (!mongoose.isValidObjectId(receiverId)) {
       return res.status(400).json({
         success: false,
-        message: 'Aap khud ko swap request nahi bhej sakte'
+        message: "Invalid receiver ID.",
       });
     }
 
-    const existingReq = await Request.findOne({
-      sender: req.user._id,
-      receiver: receiverId,
-      status: 'pending'
-    });
-
-    if (existingReq) {
+    if (
+      receiverId.toString() === senderId.toString()
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Aap pehle hi is user ko ek pending request bhej chuke hain'
+        message: "You cannot send a request to yourself.",
       });
     }
 
-    const newRequest = await Request.create({
-      sender: req.user._id,
+    const cleanSkillOffered = String(skillOffered).trim();
+    const cleanSkillWanted = String(skillWanted).trim();
+
+    if (!cleanSkillOffered || !cleanSkillWanted) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide valid skill names.",
+      });
+    }
+
+    if (
+      cleanSkillOffered.length > 100 ||
+      cleanSkillWanted.length > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Skill names cannot exceed 100 characters.",
+      });
+    }
+
+    const [sender, receiver] = await Promise.all([
+      User.findById(senderId).select("_id isActive"),
+      User.findById(receiverId).select("_id isActive"),
+    ]);
+
+    if (!sender || sender.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is unavailable.",
+      });
+    }
+
+    if (!receiver || receiver.isActive === false) {
+      return res.status(404).json({
+        success: false,
+        message: "This user is unavailable.",
+      });
+    }
+
+    // Check for an existing pending request
+    // in the same direction.
+    const existingRequest = await Request.findOne({
+      sender: senderId,
       receiver: receiverId,
-      skillOffered,
-      skillWanted,
-      message: message || ''
+      status: "pending",
     });
 
-    res.status(201).json({
+    if (existingRequest) {
+      return res.status(409).json({
+        success: false,
+        code: "REQUEST_ALREADY_PENDING",
+        message: "You have already sent a request to this user.",
+        data: existingRequest,
+      });
+    }
+
+    // Do not create a new request if the users
+    // are already connected through an accepted request.
+    const existingConnection = await Request.findOne({
+      status: "accepted",
+      $or: [
+        {
+          sender: senderId,
+          receiver: receiverId,
+        },
+        {
+          sender: receiverId,
+          receiver: senderId,
+        },
+      ],
+    });
+
+    if (existingConnection) {
+      return res.status(409).json({
+        success: false,
+        code: "ALREADY_CONNECTED",
+        message: "You are already connected with this user.",
+      });
+    }
+
+    // Reuse a previously rejected request when possible.
+    // This prevents unnecessary duplicate request documents.
+    let request = await Request.findOne({
+      sender: senderId,
+      receiver: receiverId,
+      status: "rejected",
+    }).sort({ updatedAt: -1 });
+
+    if (request) {
+      request.skillOffered = cleanSkillOffered;
+      request.skillWanted = cleanSkillWanted;
+      request.message = String(message || "").trim();
+      request.status = "pending";
+
+      await request.save();
+    } else {
+      request = await Request.create({
+        sender: senderId,
+        receiver: receiverId,
+        skillOffered: cleanSkillOffered,
+        skillWanted: cleanSkillWanted,
+        message: String(message || "").trim(),
+        status: "pending",
+      });
+    }
+
+    return res.status(201).json({
       success: true,
-      message: 'Request successfully bhej di gayi!',
-      data: newRequest
+      message: "Request sent successfully!",
+      data: request,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Send request error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send request.",
+    });
   }
 };
+
+// ============================================
+// 2. GET SENT AND RECEIVED REQUESTS
+// GET /api/requests/my
+// ============================================
 
 exports.getMyRequests = async (req, res) => {
   try {
-    const received = await Request.find({ receiver: req.user._id })
-      .populate('sender', 'name email college xp')
-      .sort({ createdAt: -1 });
+    const userId = req.user?._id;
 
-    const sent = await Request.find({ sender: req.user._id })
-      .populate('receiver', 'name email college xp')
-      .sort({ createdAt: -1 });
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to view your requests.",
+      });
+    }
 
-    res.status(200).json({
+    const [received, sent] = await Promise.all([
+      Request.find({
+        receiver: userId,
+      })
+        .populate(
+          "sender",
+          "name email college location bio xp rating skillsToTeach skillsToLearn"
+        )
+        .sort({ createdAt: -1 }),
+
+      Request.find({
+        sender: userId,
+      })
+        .populate(
+          "receiver",
+          "name email college location bio xp rating skillsToTeach skillsToLearn"
+        )
+        .sort({ createdAt: -1 }),
+    ]);
+
+    return res.status(200).json({
       success: true,
-      data: { received, sent }
+      data: {
+        received,
+        sent,
+      },
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Get requests error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch requests.",
+    });
   }
 };
+
+// ============================================
+// 3. ACCEPT OR REJECT REQUEST
+// PUT /api/requests/:id/respond
+// ============================================
 
 exports.respondToRequest = async (req, res) => {
   try {
     const { status } = req.body;
+    const userId = req.user?._id;
+    const { id } = req.params;
 
-    if (!['accepted', 'rejected'].includes(status)) {
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to respond to requests.",
+      });
+    }
+
+    if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
-        message: 'Status sirf accepted ya rejected ho sakta hai'
+        message: "Invalid request ID.",
       });
     }
 
-    const request = await Request.findById(req.params.id);
+    if (!["accepted", "rejected"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be accepted or rejected.",
+      });
+    }
+
+    // Atomically update only a pending request
+    // addressed to the currently logged-in user.
+    const request = await Request.findOneAndUpdate(
+      {
+        _id: id,
+        receiver: userId,
+        status: "pending",
+      },
+      {
+        $set: {
+          status,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     if (!request) {
-      return res.status(404).json({ success: false, message: 'Request nahi mili' });
-    }
+      const existingRequest = await Request.findById(id);
 
-    if (request.receiver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
+      if (!existingRequest) {
+        return res.status(404).json({
+          success: false,
+          message: "Request not found.",
+        });
+      }
+
+      if (
+        existingRequest.receiver.toString() !==
+        userId.toString()
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "You cannot respond to this request.",
+        });
+      }
+
+      return res.status(409).json({
         success: false,
-        message: 'Aap is request ko respond karne ke liye authorized nahi hain'
+        message: "This request has already been processed.",
+        data: existingRequest,
       });
     }
 
-    request.status = status;
-    await request.save();
-
-    if (status === 'accepted') {
-      const incUpdate = {};
-      incUpdate['$inc'] = { xp: 20 };
-      await User.findByIdAndUpdate(request.sender, incUpdate);
-      await User.findByIdAndUpdate(request.receiver, incUpdate);
+    // Award XP only after a successful acceptance.
+    // The pending-only atomic update prevents repeated
+    // acceptance of the same request from awarding XP again.
+    if (status === "accepted") {
+      await User.updateMany(
+        {
+          _id: {
+            $in: [request.sender, request.receiver],
+          },
+        },
+        {
+          $inc: {
+            xp: 20,
+          },
+        }
+      );
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: 'Request update ho gayi!',
-      data: request
+      message:
+        status === "accepted"
+          ? "Request accepted successfully!"
+          : "Request rejected successfully!",
+      data: request,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Respond to request error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to process the request.",
+    });
   }
 };

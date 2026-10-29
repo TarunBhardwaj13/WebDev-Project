@@ -1,170 +1,445 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import api from '../api/axios';
-import { 
-  Search, 
-  Filter, 
-  Sparkles, 
-  Send, 
-  GraduationCap, 
-  Star, 
-  Award, 
-  BookOpen, 
-  X, 
+import React, { useState, useEffect, useCallback } from "react";
+import { useAuth } from "../context/AuthContext";
+import api from "../api/axios";
+import {
+  Search,
+  Filter,
+  Sparkles,
+  Send,
+  GraduationCap,
+  Star,
+  Award,
+  BookOpen,
+  X,
   CheckCircle2,
   Loader2,
-  AlertCircle
-} from 'lucide-react';
+  AlertCircle,
+  Users,
+} from "lucide-react";
 
 export default function Matches() {
   const { user } = useAuth();
 
-  // API Data & Loading state
   const [partners, setPartners] = useState([]);
+  const [requestStatuses, setRequestStatuses] = useState({});
   const [loading, setLoading] = useState(true);
-  const [apiError, setApiError] = useState('');
+  const [apiError, setApiError] = useState("");
 
-  // Filter state
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedMode, setSelectedMode] = useState('All');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [selectedMode, setSelectedMode] = useState("All");
 
-  // Modal State for Sending Request
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPartner, setSelectedPartner] = useState(null);
-  const [teachSkill, setTeachSkill] = useState('');
-  const [learnSkill, setLearnSkill] = useState('');
-  const [customMessage, setCustomMessage] = useState('');
+  const [teachSkill, setTeachSkill] = useState("");
+  const [learnSkill, setLearnSkill] = useState("");
+  const [customMessage, setCustomMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
 
-  // Fetch partners/matches directly from MongoDB backend
-  useEffect(() => {
-    const fetchPartners = async () => {
-      try {
-        setLoading(true);
-        setApiError('');
-        const res = await api.get('/matches');
-        setPartners(res.data.data || []);
-      } catch (err) {
-        console.error('Failed to load partners from database:', err);
-        setApiError(err.response?.data?.message || 'Database se partners load nahi ho paye.');
-        setPartners([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchPartners();
+  const [toast, setToast] = useState(null);
+
+  // =====================================
+  // TOAST NOTIFICATION
+  // =====================================
+
+  const showToast = (message, type = "success") => {
+    setToast({ message, type });
+
+    window.setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
+
+  // =====================================
+  // FETCH PARTNERS AND REQUEST STATUS
+  // =====================================
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setApiError("");
+
+      const [matchesResponse, requestsResponse] =
+        await Promise.all([
+          api.get("/matches"),
+          api.get("/requests/my"),
+        ]);
+
+      const partnerData = matchesResponse.data?.data || [];
+      const requestData = requestsResponse.data?.data || {};
+
+      const received = requestData.received || [];
+      const sent = requestData.sent || [];
+
+      const statusMap = {};
+
+      // Requests sent by the current user
+      sent.forEach((request) => {
+        const receiverId =
+          request.receiver?._id || request.receiver;
+
+        if (receiverId) {
+          statusMap[String(receiverId)] = request.status;
+        }
+      });
+
+      // Requests received from other users
+      received.forEach((request) => {
+        const senderId = request.sender?._id || request.sender;
+
+        if (!senderId) return;
+
+        const key = String(senderId);
+        const existingStatus = statusMap[key];
+
+        // An accepted connection takes priority.
+        if (
+          request.status === "accepted" ||
+          !existingStatus
+        ) {
+          statusMap[key] = request.status;
+        }
+      });
+
+      setPartners(partnerData);
+      setRequestStatuses(statusMap);
+    } catch (error) {
+      console.error("Failed to load matches:", error);
+
+      setApiError(
+        error.response?.data?.message ||
+          "Unable to load skill partners. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Open Connect Modal
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // =====================================
+  // OPEN REQUEST MODAL
+  // =====================================
+
   const handleOpenModal = (partner) => {
+    const status = requestStatuses[String(partner._id)];
+
+    if (status === "accepted") {
+      showToast("You are already connected with this user.", "info");
+      return;
+    }
+
+    if (status === "pending") {
+      showToast("A request is already pending with this user.", "info");
+      return;
+    }
+
     setSelectedPartner(partner);
-    setTeachSkill(user?.skillsToTeach?.[0]?.name || '');
-    setLearnSkill(partner.skillsToTeach?.[0]?.name || '');
-    setCustomMessage(`Hi ${partner.name?.split(' ')[0] || ''}, I would like to exchange skills with you!`);
+
+    setTeachSkill(
+      user?.skillsToTeach?.[0]?.name || ""
+    );
+
+    setLearnSkill(
+      partner.skillsToTeach?.[0]?.name || ""
+    );
+
+    setCustomMessage(
+      `Hi ${partner.name?.split(" ")[0] || ""}, I would like to exchange skills with you!`
+    );
+
     setIsModalOpen(true);
   };
 
-  // Submit Exchange Request to Backend API
-  const handleSubmitRequest = async (e) => {
-    e.preventDefault();
-    if (!selectedPartner) return;
+  // =====================================
+  // SEND REQUEST
+  // =====================================
+
+  const handleSubmitRequest = async (event) => {
+    event.preventDefault();
+
+    if (!selectedPartner || submitting) return;
+
+    if (!teachSkill.trim() || !learnSkill.trim()) {
+      showToast("Please enter both skills.", "error");
+      return;
+    }
 
     try {
       setSubmitting(true);
-      await api.post('/requests', {
+
+      const response = await api.post("/requests", {
         receiverId: selectedPartner._id,
-        teachSkill,
-        learnSkill,
-        message: customMessage
+
+        // These field names must match requestController.js.
+        skillOffered: teachSkill.trim(),
+        skillWanted: learnSkill.trim(),
+
+        message: customMessage.trim(),
       });
+
+      if (!response.data?.success) {
+        throw new Error(
+          response.data?.message || "Unable to send request."
+        );
+      }
+
+      const partnerId = String(selectedPartner._id);
+
+      setRequestStatuses((previous) => ({
+        ...previous,
+        [partnerId]: "pending",
+      }));
+
+      const partnerName = selectedPartner.name;
+
       setIsModalOpen(false);
-      setToastMessage(`Exchange request sent to ${selectedPartner.name} successfully!`);
-      setTimeout(() => setToastMessage(''), 4000);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Request bhejne me error aayi.');
+      setSelectedPartner(null);
+
+      showToast(
+        `Request sent successfully to ${partnerName}!`
+      );
+
+      // Refresh the backend data.
+      await fetchData();
+    } catch (error) {
+      console.error("Send request failed:", error);
+
+      const statusCode = error.response?.status;
+      const errorCode = error.response?.data?.code;
+
+      if (
+        statusCode === 409 &&
+        errorCode === "ALREADY_CONNECTED"
+      ) {
+        setRequestStatuses((previous) => ({
+          ...previous,
+          [String(selectedPartner._id)]: "accepted",
+        }));
+
+        setIsModalOpen(false);
+        showToast("You are already connected with this user.", "info");
+      } else if (
+        statusCode === 409 ||
+        errorCode === "REQUEST_ALREADY_PENDING"
+      ) {
+        setRequestStatuses((previous) => ({
+          ...previous,
+          [String(selectedPartner._id)]: "pending",
+        }));
+
+        setIsModalOpen(false);
+        showToast("A request is already pending.", "info");
+      } else {
+        showToast(
+          error.response?.data?.message ||
+            error.message ||
+            "Failed to send request. Please try again.",
+          "error"
+        );
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
+  // =====================================
+  // MATCH BADGE STYLE
+  // =====================================
+
   const getScoreBadgeClass = (score) => {
-    if (score >= 85) return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
-    if (score >= 70) return 'bg-teal-500/10 text-teal-300 border border-teal-500/30';
-    return 'bg-slate-700/60 text-slate-300 border border-slate-600';
+    if (score >= 85) {
+      return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+    }
+
+    if (score >= 70) {
+      return "bg-teal-500/10 text-teal-300 border border-teal-500/30";
+    }
+
+    return "bg-slate-700/60 text-slate-300 border border-slate-600";
   };
 
-  // Filter Logic over database response
-  const filteredPartners = partners.filter((p) => {
-    // Current logged-in user ko khud ke matches me nahi dikhana
-    if (p._id === user?._id) return false;
+  // =====================================
+  // BUTTON STATE
+  // =====================================
+
+  const getButtonDetails = (partner) => {
+    const status = requestStatuses[String(partner._id)];
+
+    if (status === "accepted") {
+      return {
+        label: "Connected",
+        disabled: true,
+        className:
+          "bg-slate-700 text-emerald-400 cursor-not-allowed",
+        icon: <CheckCircle2 className="w-4 h-4" />,
+      };
+    }
+
+    if (status === "pending") {
+      return {
+        label: "Request Sent",
+        disabled: true,
+        className:
+          "bg-slate-700 text-amber-300 cursor-not-allowed",
+        icon: <CheckCircle2 className="w-4 h-4" />,
+      };
+    }
+
+    if (status === "rejected") {
+      return {
+        label: "Send Again",
+        disabled: false,
+        className:
+          "bg-emerald-500 hover:bg-emerald-400 text-slate-950",
+        icon: <Send className="w-4 h-4" />,
+      };
+    }
+
+    return {
+      label: "Connect",
+      disabled: false,
+      className:
+        "bg-emerald-500 hover:bg-emerald-400 text-slate-950",
+      icon: <Send className="w-4 h-4" />,
+    };
+  };
+
+  // =====================================
+  // FILTER PARTNERS
+  // =====================================
+
+  const filteredPartners = partners.filter((partner) => {
+    if (
+      String(partner._id) === String(user?._id)
+    ) {
+      return false;
+    }
 
     const term = searchTerm.toLowerCase();
-    const teachSkills = p.skillsToTeach || [];
-    const learnSkills = p.skillsToLearn || [];
 
-    const matchesSearch = 
-      p.name?.toLowerCase().includes(term) ||
-      teachSkills.some(s => s.name?.toLowerCase().includes(term)) ||
-      learnSkills.some(s => s.name?.toLowerCase().includes(term));
+    const teachSkills = partner.skillsToTeach || [];
+    const learnSkills = partner.skillsToLearn || [];
 
-    const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
-    const matchesMode = selectedMode === 'All' || p.learningMode === selectedMode || p.learningMode === 'Both';
+    const matchesSearch =
+      partner.name?.toLowerCase().includes(term) ||
+      teachSkills.some((skill) =>
+        skill.name?.toLowerCase().includes(term)
+      ) ||
+      learnSkills.some((skill) =>
+        skill.name?.toLowerCase().includes(term)
+      );
+
+    const matchesCategory =
+      selectedCategory === "All" ||
+      partner.category === selectedCategory;
+
+    const matchesMode =
+      selectedMode === "All" ||
+      partner.learningMode === selectedMode ||
+      partner.learningMode === "Both";
 
     return matchesSearch && matchesCategory && matchesMode;
   });
 
-  return (
-    <div className="bg-slate-900 min-h-screen text-slate-100 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto space-y-8">
+  // =====================================
+  // UI
+  // =====================================
 
-        {/* Success Alert */}
-        {toastMessage && (
-          <div className="bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 p-4 rounded-2xl flex items-center gap-3 text-sm font-semibold shadow-xl">
-            <CheckCircle2 className="w-5 h-5 shrink-0" />
-            <span>{toastMessage}</span>
+  return (
+    <div className="min-h-screen bg-slate-900 px-4 py-10 text-slate-100 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+
+        {/* Toast Notification */}
+        {toast && (
+          <div
+            role="status"
+            className={`fixed right-4 top-4 z-[100] flex max-w-md items-center gap-3 rounded-xl border p-4 text-sm font-semibold shadow-2xl ${
+              toast.type === "error"
+                ? "border-rose-500/40 bg-slate-800 text-rose-300"
+                : toast.type === "info"
+                ? "border-sky-500/40 bg-slate-800 text-sky-300"
+                : "border-emerald-500/40 bg-slate-800 text-emerald-300"
+            }`}
+          >
+            {toast.type === "error" ? (
+              <AlertCircle className="h-5 w-5 shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+            )}
+
+            <span>{toast.message}</span>
+
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="ml-2"
+              aria-label="Dismiss notification"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
-        {/* API Error Alert */}
+        {/* API Error */}
         {apiError && (
-          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-4 rounded-2xl flex items-center gap-3 text-sm font-semibold">
-            <AlertCircle className="w-5 h-5 shrink-0" />
+          <div className="flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+            <AlertCircle className="h-5 w-5 shrink-0" />
             <span>{apiError}</span>
+
+            <button
+              type="button"
+              onClick={fetchData}
+              className="ml-auto underline"
+            >
+              Retry
+            </button>
           </div>
         )}
 
         {/* Header */}
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
-            <Sparkles className="w-3.5 h-3.5" /> Reciprocal Match Engine
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-400">
+            <Sparkles className="h-3.5 w-3.5" />
+            Reciprocal Match Engine
           </div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold text-white">Find Your Skill Buddy</h1>
-          <p className="text-sm text-slate-400 mt-1 max-w-xl">
-            Discover peers from the database with compatible learning goals.
+
+          <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
+            Find Your Skill Buddy
+          </h1>
+
+          <p className="mt-1 max-w-xl text-sm text-slate-400">
+            Discover peers with compatible learning goals and exchange skills.
           </p>
         </div>
 
-        {/* Search & Filters */}
-        <div className="bg-slate-800/60 border border-slate-700/80 p-4 sm:p-5 rounded-2xl shadow-lg flex flex-col md:flex-row gap-4">
+        {/* Search and Filters */}
+        <div className="flex flex-col gap-4 rounded-2xl border border-slate-700/80 bg-slate-800/60 p-4 shadow-lg sm:p-5 md:flex-row">
           <div className="relative flex-grow">
-            <Search className="w-5 h-5 text-slate-500 absolute left-3.5 top-3" />
+            <Search className="absolute left-3.5 top-3 h-5 w-5 text-slate-500" />
+
             <input
               type="text"
-              placeholder="Search by skill (e.g. Python, Java, React) or student name..."
+              placeholder="Search by skill or student name..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-11 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              onChange={(event) =>
+                setSearchTerm(event.target.value)
+              }
+              className="w-full rounded-xl border border-slate-700 bg-slate-900 py-2.5 pl-11 pr-4 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
             />
           </div>
 
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-400 shrink-0" />
+            <Filter className="h-4 w-4 shrink-0 text-slate-400" />
+
             <select
               value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+              onChange={(event) =>
+                setSelectedCategory(event.target.value)
+              }
+              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-xs text-white focus:border-emerald-500 focus:outline-none sm:text-sm"
             >
               <option value="All">All Categories</option>
               <option value="Programming">Programming</option>
@@ -175,8 +450,10 @@ export default function Matches() {
 
             <select
               value={selectedMode}
-              onChange={(e) => setSelectedMode(e.target.value)}
-              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+              onChange={(event) =>
+                setSelectedMode(event.target.value)
+              }
+              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-xs text-white focus:border-emerald-500 focus:outline-none sm:text-sm"
             >
               <option value="All">All Modes</option>
               <option value="Online">Online Only</option>
@@ -186,194 +463,269 @@ export default function Matches() {
           </div>
         </div>
 
-        {/* Content Section: Loading vs Cards vs Empty */}
+        {/* Partners */}
         {loading ? (
-          <div className="py-24 flex flex-col items-center justify-center text-slate-400 text-sm gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-            <span>Database se compatible skill partners load ho rahe hain...</span>
+          <div className="flex flex-col items-center justify-center gap-3 py-24 text-sm text-slate-400">
+            <Loader2 className="h-8 w-8 animate-spin text-emerald-400" />
+            <span>Loading skill partners...</span>
           </div>
         ) : filteredPartners.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredPartners.map((partner) => (
-              <div 
-                key={partner._id}
-                className="bg-slate-800/60 border border-slate-700/80 hover:border-emerald-500/50 rounded-2xl p-6 transition duration-200 flex flex-col justify-between shadow-lg"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-3 mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-lg shrink-0">
-                        {partner.name ? partner.name.charAt(0).toUpperCase() : 'U'}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {filteredPartners.map((partner) => {
+              const button = getButtonDetails(partner);
+
+              return (
+                <div
+                  key={partner._id}
+                  className="flex flex-col justify-between rounded-2xl border border-slate-700/80 bg-slate-800/60 p-6 shadow-lg transition duration-200 hover:border-emerald-500/50"
+                >
+                  <div>
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-lg font-black text-slate-950">
+                          {partner.name
+                            ? partner.name.charAt(0).toUpperCase()
+                            : "U"}
+                        </div>
+
+                        <div>
+                          <h3 className="text-base font-bold leading-snug text-white">
+                            {partner.name}
+                          </h3>
+
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
+                            <GraduationCap className="h-3.5 w-3.5" />
+                            {partner.college || "Peer Student"}
+                          </div>
+                        </div>
                       </div>
+
+                      <div
+                        className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-black ${getScoreBadgeClass(
+                          partner.matchScore || 75
+                        )}`}
+                      >
+                        {partner.matchScore
+                          ? `${partner.matchScore}% Match`
+                          : "Match"}
+                      </div>
+                    </div>
+
+                    <p className="mb-4 line-clamp-2 text-xs leading-relaxed text-slate-300">
+                      {partner.bio ||
+                        "Ready to exchange skills and knowledge."}
+                    </p>
+
+                    {/* Skills to Teach */}
+                    <div className="mb-5 space-y-3">
                       <div>
-                        <h3 className="text-base font-bold text-white leading-snug">{partner.name}</h3>
-                        <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                          <span className="flex items-center gap-1">
-                            <GraduationCap className="w-3.5 h-3.5" />
-                            {partner.college || 'Peer Student'}
-                          </span>
+                        <span className="mb-1.5 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                          <Award className="h-3.5 w-3.5" />
+                          Can Teach
+                        </span>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {partner.skillsToTeach?.length ? (
+                            partner.skillsToTeach.map(
+                              (skill, index) => (
+                                <span
+                                  key={`${skill.name}-${index}`}
+                                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200"
+                                >
+                                  {skill.name}
+                                  {skill.level && (
+                                    <span className="ml-1 text-[10px] text-emerald-400">
+                                      ({skill.level})
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            )
+                          ) : (
+                            <span className="text-xs italic text-slate-500">
+                              No teaching skills listed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Skills to Learn */}
+                      <div>
+                        <span className="mb-1.5 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                          <BookOpen className="h-3.5 w-3.5" />
+                          Wants to Learn
+                        </span>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {partner.skillsToLearn?.length ? (
+                            partner.skillsToLearn.map(
+                              (skill, index) => (
+                                <span
+                                  key={`${skill.name}-${index}`}
+                                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200"
+                                >
+                                  {skill.name}
+                                </span>
+                              )
+                            )
+                          ) : (
+                            <span className="text-xs italic text-slate-500">
+                              No learning goals listed
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
-
-                    <div className={`px-2.5 py-1 rounded-full text-xs font-black shrink-0 ${getScoreBadgeClass(partner.matchScore || 75)}`}>
-                      {partner.matchScore ? `${partner.matchScore}% Match` : 'Match'}
-                    </div>
                   </div>
 
-                  <p className="text-xs text-slate-300 line-clamp-2 mb-4 leading-relaxed">
-                    {partner.bio || 'Skill exchange karne ke liye ready.'}
-                  </p>
-
-                  <div className="space-y-3 mb-5">
-                    <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 block mb-1.5 flex items-center gap-1">
-                        <Award className="w-3.5 h-3.5" /> Can Teach
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {partner.skillsToTeach && partner.skillsToTeach.length > 0 ? (
-                          partner.skillsToTeach.map((s, idx) => (
-                            <span key={idx} className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded-lg">
-                              {s.name} <span className="text-[10px] text-emerald-400">({s.level})</span>
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-slate-500 italic">No teaching skills listed</span>
-                        )}
+                  {/* Card Footer */}
+                  <div className="flex items-center justify-between border-t border-slate-700/60 pt-4">
+                    <div className="flex items-center gap-3 text-xs text-slate-400">
+                      <div className="flex items-center gap-1 font-semibold text-amber-400">
+                        <Star className="h-3.5 w-3.5 fill-amber-400" />
+                        {Number(partner.rating ?? 5).toFixed(1)}
                       </div>
+
+                      <div>{partner.xp ?? 0} XP</div>
                     </div>
 
-                    <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400 block mb-1.5 flex items-center gap-1">
-                        <BookOpen className="w-3.5 h-3.5" /> Wants to Learn
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {partner.skillsToLearn && partner.skillsToLearn.length > 0 ? (
-                          partner.skillsToLearn.map((s, idx) => (
-                            <span key={idx} className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded-lg">
-                              {s.name}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-slate-500 italic">No learning goals listed</span>
-                        )}
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenModal(partner)}
+                      disabled={button.disabled}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold shadow-md transition disabled:opacity-80 ${button.className}`}
+                    >
+                      {button.icon}
+                      {button.label}
+                    </button>
                   </div>
                 </div>
-
-                <div className="pt-4 border-t border-slate-700/60 flex items-center justify-between">
-                  <div className="flex items-center gap-3 text-xs text-slate-400">
-                    <div className="flex items-center gap-1 font-semibold text-amber-400">
-                      <Star className="w-3.5 h-3.5 fill-amber-400" />
-                      {partner.rating ? partner.rating.toFixed(1) : '5.0'}
-                    </div>
-                    <div>{partner.xp || 10} XP</div>
-                  </div>
-
-                  <button
-                    onClick={() => handleOpenModal(partner)}
-                    className="inline-flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-1.5 rounded-lg text-xs transition shadow-md"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    Send Request
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
-          <div className="py-20 text-center text-slate-400 bg-slate-800/20 border border-slate-800 rounded-2xl text-sm">
-            Database me abhi koi matching user nahi mila. Dusre users ke register hone par yahan show honge.
+          <div className="rounded-2xl border border-slate-800 bg-slate-800/20 py-20 text-center text-sm text-slate-400">
+            <Users className="mx-auto mb-3 h-8 w-8 text-slate-500" />
+
+            {searchTerm
+              ? "No partners match your search."
+              : "No skill partners found yet. Try again later."}
           </div>
         )}
-
       </div>
 
-      {/* Exchange Request Modal */}
+      {/* Request Modal */}
       {isModalOpen && selectedPartner && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-800 border border-slate-700 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative">
-            
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-800 p-6 shadow-2xl sm:p-8">
             <button
+              type="button"
               onClick={() => setIsModalOpen(false)}
               className="absolute right-5 top-5 text-slate-400 hover:text-white"
+              aria-label="Close request form"
             >
-              <X className="w-5 h-5" />
+              <X className="h-5 w-5" />
             </button>
 
             <div className="mb-6">
-              <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Skill Barter Invitation</span>
-              <h3 className="text-xl font-bold text-white mt-1">Connect with {selectedPartner.name}</h3>
-              <p className="text-xs text-slate-400 mt-1">Propose a reciprocal exchange session.</p>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                Skill Exchange Invitation
+              </span>
+
+              <h3 className="mt-1 text-xl font-bold text-white">
+                Connect with {selectedPartner.name}
+              </h3>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Propose a skill exchange with this user.
+              </p>
             </div>
 
-            <form onSubmit={handleSubmitRequest} className="space-y-4">
+            <form
+              onSubmit={handleSubmitRequest}
+              className="space-y-4"
+            >
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300">
                   Skill You Want to Learn
                 </label>
+
                 <input
                   type="text"
                   value={learnSkill}
-                  onChange={(e) => setLearnSkill(e.target.value)}
+                  onChange={(event) =>
+                    setLearnSkill(event.target.value)
+                  }
                   placeholder="e.g. Python, AI, React"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  maxLength={100}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300">
                   Skill You Can Teach in Return
                 </label>
+
                 <input
                   type="text"
                   value={teachSkill}
-                  onChange={(e) => setTeachSkill(e.target.value)}
+                  onChange={(event) =>
+                    setTeachSkill(event.target.value)
+                  }
                   placeholder="e.g. Java, React, SQL"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  maxLength={100}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300">
                   Personal Note
                 </label>
+
                 <textarea
                   rows={3}
                   value={customMessage}
-                  onChange={(e) => setCustomMessage(e.target.value)}
-                  placeholder="Introduce yourself and propose a schedule..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                  required
+                  onChange={(event) =>
+                    setCustomMessage(event.target.value)
+                  }
+                  placeholder="Introduce yourself..."
+                  maxLength={1000}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
 
-              <div className="pt-2 flex gap-3">
+              <div className="flex gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="w-1/2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-xl text-sm transition"
+                  disabled={submitting}
+                  className="w-1/2 rounded-xl bg-slate-700 py-2.5 text-sm font-bold text-white transition hover:bg-slate-600 disabled:opacity-50"
                 >
                   Cancel
                 </button>
+
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="w-1/2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold py-2.5 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10"
+                  className="flex w-1/2 items-center justify-center gap-2 rounded-xl bg-emerald-500 py-2.5 text-sm font-extrabold text-slate-950 shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  {submitting ? 'Sending...' : 'Send Request'}
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+
+                  {submitting ? "Sending..." : "Send Request"}
                 </button>
               </div>
             </form>
-
           </div>
         </div>
       )}
-
     </div>
   );
 }

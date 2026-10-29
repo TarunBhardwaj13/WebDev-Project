@@ -53,12 +53,12 @@ const userSchema = new mongoose.Schema(
       maxlength: 500,
     },
 
-    // Learning Mode
-    learningMode: {
-      type: String,
-      enum: ["Online", "Offline", "Both"],
-      default: "Both",
-    },
+    // Learning Mode - Online Only
+learningMode: {
+  type: String,
+  enum: ["Online"],
+  default: "Online",
+},
 
     // Skills User Can Teach
     skillsToTeach: [

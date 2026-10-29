@@ -1,164 +1,235 @@
-const User = require('../models/User');
-const jwt = require('jsonwebtoken');
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
 
-// Token helper
+// =====================================
+// 1. GENERATE JWT TOKEN
+// =====================================
+
 const generateToken = (id) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is missing in .env");
+  }
+
   return jwt.sign(
     { id },
-    process.env.JWT_SECRET || 'learn_unique_secret_key_123',
-    { expiresIn: '30d' }
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
   );
 };
 
-// 1. REGISTER USER
+// =====================================
+// 2. REGISTER USER
+// =====================================
+
 exports.registerUser = async (req, res) => {
   try {
-    const { name, email, password, college, location, skillsToTeach, skillsToLearn } = req.body;
+    const {
+      name,
+      email,
+      password,
+      college,
+      location,
+      skillsToTeach,
+      skillsToLearn,
+    } = req.body;
 
-    console.log('--- Register Request Received ---');
-    console.log('Payload:', { name, email, college, location });
-
-    // Basic validation
+    // Required fields
     if (!name || !email || !password) {
-      console.log('Validation Error: Missing name, email, ya password');
       return res.status(400).json({
         success: false,
-        message: 'Name, email aur password zaroori hain'
+        message: "Name, email and password are required.",
+      });
+    }
+
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      typeof password !== "string"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid input format.",
       });
     }
 
     if (password.length < 6) {
-      console.log('Validation Error: Password length < 6');
       return res.status(400).json({
         success: false,
-        message: 'Password kam se kam 6 characters ka hona chahiye'
+        message: "Password must contain at least 6 characters.",
       });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
-    // Pehle check karo ki email exist karta hai ya nahi
-    const userExists = await User.findOne({ email: cleanEmail });
-    if (userExists) {
-      console.log(`Duplicate Email Found: ${cleanEmail}`);
+    if (!cleanName || !cleanEmail) {
       return res.status(400).json({
         success: false,
-        message: 'Ye email pehle se registered hai. Sign In karein.'
+        message: "Name and email cannot be empty.",
       });
     }
 
-    // Naya user create karein
-    const user = await User.create({
-      name: name.trim(),
+    // Check existing account
+    const existingUser = await User.findOne({
       email: cleanEmail,
-      password,
-      college: college || '',
-      location: location || '',
-      skillsToTeach: skillsToTeach || [],
-      skillsToLearn: skillsToLearn || []
     });
 
-    console.log('User created successfully in DB, ID:', user._id);
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered. Please login.",
+      });
+    }
 
-    res.status(201).json({
+    // Always create normal user.
+    // Never accept role from req.body.
+    const user = await User.create({
+      name: cleanName,
+      email: cleanEmail,
+      password,
+      college: college || "",
+      location: location || "",
+      skillsToTeach: Array.isArray(skillsToTeach)
+        ? skillsToTeach
+        : [],
+      skillsToLearn: Array.isArray(skillsToLearn)
+        ? skillsToLearn
+        : [],
+      role: "user",
+    });
+
+    const token = generateToken(user._id);
+
+    return res.status(201).json({
       success: true,
-      message: 'Account successfully create ho gaya!',
+      message: "Account created successfully.",
       data: {
         _id: user._id,
         name: user.name,
         email: user.email,
         college: user.college,
         location: user.location,
-        token: generateToken(user._id)
-      }
+        role: user.role,
+        token,
+      },
     });
   } catch (error) {
-    console.error('Registration Error Details:', error);
+    console.error("Registration error:", error.message);
 
-    // MongoDB duplicate key error code E11000 handling
     if (error.code === 11000) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: 'Ye email pehle se registered hai'
+        message: "This email is already registered.",
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: error.message || 'Server error aayi hai'
+      message: "Unable to create account.",
     });
   }
 };
 
-// 2. LOGIN USER
+// =====================================
+// 3. LOGIN USER / ADMIN
+// =====================================
+
 exports.loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log('--- Login Request Received ---');
-    console.log('Email:', email);
-
-    if (!email || !password) {
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      !email.trim() ||
+      !password
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Email aur password dono daalein'
+        message: "Email and password are required.",
       });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = email.trim().toLowerCase();
 
-    const user = await User.findOne({ email: cleanEmail }).select('+password');
+    // Password is excluded by default in User.js.
+    const user = await User.findOne({
+      email: cleanEmail,
+    }).select("+password");
+
     if (!user || !(await user.matchPassword(password))) {
-      console.log('Login failed: Invalid credentials');
       return res.status(401).json({
         success: false,
-        message: 'Galat email ya password'
+        message: "Invalid email or password.",
       });
     }
 
-    console.log('Login successful for ID:', user._id);
+    // Block inactive accounts
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is inactive. Contact support.",
+      });
+    }
 
-    res.status(200).json({
+    const token = generateToken(user._id);
+
+    return res.status(200).json({
       success: true,
-      message: 'Login successful!',
+      message: "Login successful.",
       data: {
         _id: user._id,
         name: user.name,
         email: user.email,
         college: user.college,
         location: user.location,
-        token: generateToken(user._id)
-      }
+        role: user.role,
+        token,
+      },
     });
   } catch (error) {
-    console.error('Login Error Details:', error);
-    res.status(500).json({
+    console.error("Login error:", error.message);
+
+    return res.status(500).json({
       success: false,
-      message: error.message || 'Server error aayi hai'
+      message: "Unable to login. Please try again.",
     });
   }
 };
 
-// 3. GET LOGGED IN USER
+// =====================================
+// 4. GET LOGGED-IN USER
+// =====================================
+
 exports.getMe = async (req, res) => {
   try {
+    // protect middleware must authenticate the user first.
     const user = await User.findById(req.user._id);
+
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User nahi mila'
+        message: "User not found.",
       });
     }
 
-    res.status(200).json({
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is inactive.",
+      });
+    }
+
+    return res.status(200).json({
       success: true,
-      data: user
+      data: user,
     });
   } catch (error) {
-    console.error('GetMe Error Details:', error);
-    res.status(500).json({
+    console.error("Get profile error:", error.message);
+
+    return res.status(500).json({
       success: false,
-      message: error.message || 'Server error aayi hai'
+      message: "Unable to fetch user profile.",
     });
   }
 };
