@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/axios';
 import { 
   Calendar, 
@@ -7,7 +8,8 @@ import {
   CheckCircle2, 
   Star, 
   X, 
-  Loader2 
+  Loader2,
+  Video
 } from 'lucide-react';
 
 export default function Sessions() {
@@ -161,36 +163,56 @@ export default function Sessions() {
           </div>
         ) : filteredSessions.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {filteredSessions.map((session) => (
-              <div key={session._id} className="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-6 flex flex-col justify-between shadow-lg">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-                      {session.skill || 'Skill Exchange'}
+            {filteredSessions.map((session) => {
+              // Har session ke liye unique roomId ensure karein
+              const meetingId = session.meetingRoomId || session.roomId || session._id;
+
+              return (
+                <div key={session._id} className="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-6 flex flex-col justify-between shadow-lg">
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                        {session.skill || 'Skill Exchange'}
+                      </span>
+                      <span className="text-xs text-slate-400">{session.mode || 'Online'}</span>
+                    </div>
+
+                    <h3 className="text-lg font-bold text-white mb-2">{session.skill}</h3>
+                    <div className="space-y-1 text-xs text-slate-300">
+                      <div><strong>Date & Time:</strong> {session.date} at {session.startTime} ({session.duration || 60} mins)</div>
+                      {session.notes && <div className="text-slate-400 italic mt-2">"{session.notes}"</div>}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-slate-700/60 flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-xs font-medium text-slate-400">
+                      Status: <strong className="text-white">{session.status}</strong>
                     </span>
-                    <span className="text-xs text-slate-400">{session.mode || 'Online'}</span>
-                  </div>
 
-                  <h3 className="text-lg font-bold text-white mb-2">{session.skill}</h3>
-                  <div className="space-y-1 text-xs text-slate-300">
-                    <div><strong>Date & Time:</strong> {session.date} at {session.startTime} ({session.duration || 60} mins)</div>
-                    {session.notes && <div className="text-slate-400 italic mt-2">"{session.notes}"</div>}
+                    <div className="flex items-center gap-2">
+                      {session.status !== 'Completed' && (
+                        <>
+                          {/* Live Video + Whiteboard Meeting Button */}
+                          <Link
+                            to={`/meeting/${meetingId}`}
+                            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg shadow-sm transition"
+                          >
+                            <Video className="w-3.5 h-3.5" /> Join Meeting
+                          </Link>
+
+                          <button
+                            onClick={() => handleCompleteSession(session._id, session.teacher?._id || session.teacher)}
+                            className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-lg transition"
+                          >
+                            Mark Complete
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
-
-                <div className="mt-5 pt-4 border-t border-slate-700/60 flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-400">Status: <strong className="text-white">{session.status}</strong></span>
-                  {session.status !== 'Completed' && (
-                    <button
-                      onClick={() => handleCompleteSession(session._id, session.teacher?._id || session.teacher)}
-                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-lg transition"
-                    >
-                      Mark Complete
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="py-20 text-center text-slate-500 bg-slate-800/20 border border-slate-800 rounded-2xl text-sm">
@@ -246,7 +268,7 @@ export default function Sessions() {
                 <label className="block text-xs font-bold text-slate-300 mb-1">Agenda / Meeting Link Notes</label>
                 <textarea
                   rows={2}
-                  placeholder="Google Meet link ya topics..."
+                  placeholder="Session topics ya details..."
                   value={formNotes}
                   onChange={(e) => setFormNotes(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-emerald-500"

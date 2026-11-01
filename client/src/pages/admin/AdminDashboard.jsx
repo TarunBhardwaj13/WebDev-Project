@@ -19,6 +19,8 @@ import {
   AlertCircle,
   Mail,
   UserRound,
+  Loader2,
+  Power,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -39,6 +41,7 @@ export default function AdminDashboard() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState('');
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
   const { logout } = useAuth();
 
@@ -49,7 +52,6 @@ export default function AdminDashboard() {
       setError('');
 
       const response = await axios.get('/admin/dashboard');
-
       setStats(response.data.stats || response.data);
     } catch (err) {
       setError(
@@ -78,7 +80,6 @@ export default function AdminDashboard() {
       });
 
       const data = response.data;
-
       let list = [];
 
       if (Array.isArray(data)) {
@@ -131,6 +132,49 @@ export default function AdminDashboard() {
     }
   };
 
+  // Toggle user status: Active <-> Suspended
+  const handleToggleStatus = async (user) => {
+    if (user.role === 'admin') {
+      alert('Administrator account ka status change nahi kiya ja sakta.');
+      return;
+    }
+
+    const currentStatus = user.isActive !== false;
+    const confirmMessage = currentStatus
+      ? `Kya aap "${user.name}" ko Deactivate (Suspend) karna chahte hain?`
+      : `Kya aap "${user.name}" ko Activate karna chahte hain?`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      setActionLoadingId(user._id);
+
+      // Backend route toggle call
+      const res = await axios.patch(`/admin/users/${user._id}/toggle-status`);
+      const updatedUser = res.data.user || res.data.data?.user || {
+        ...user,
+        isActive: !currentStatus,
+      };
+
+      // State me turant update karein bina full reload ke
+      setUsers((prevUsers) =>
+        prevUsers.map((u) => (u._id === user._id ? { ...u, isActive: updatedUser.isActive } : u))
+      );
+
+      // Agar modal khula hai toh modal me bhi live update karein
+      if (selectedUser && selectedUser._id === user._id) {
+        setSelectedUser((prev) => ({ ...prev, isActive: updatedUser.isActive }));
+      }
+
+      // Stats bhi silently refresh karein
+      fetchStats();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Status change karne me error aayi.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   // View complete user details
   const handleViewDetails = async (user) => {
     setSelectedUser(user);
@@ -140,7 +184,6 @@ export default function AdminDashboard() {
     try {
       const response = await axios.get(`/admin/users/${user._id}`);
       const data = response.data;
-
       setSelectedUser(data.user || data.data?.user || data);
     } catch (err) {
       setDetailsError(
@@ -155,12 +198,8 @@ export default function AdminDashboard() {
   // Format dates safely
   const formatDate = (date) => {
     if (!date) return 'Not available';
-
     const parsedDate = new Date(date);
-
-    if (Number.isNaN(parsedDate.getTime())) {
-      return 'Not available';
-    }
+    if (Number.isNaN(parsedDate.getTime())) return 'Not available';
 
     return parsedDate.toLocaleDateString('en-IN', {
       day: '2-digit',
@@ -169,16 +208,8 @@ export default function AdminDashboard() {
     });
   };
 
-  // User status
   const getStatus = (user) => {
     return user?.isActive === false ? 'Suspended' : 'Active';
-  };
-
-  // Skills
-  const getSkills = (skills) => {
-    if (!Array.isArray(skills)) return [];
-
-    return skills;
   };
 
   const cards = [
@@ -218,12 +249,8 @@ export default function AdminDashboard() {
       <header className="border-b border-slate-800 bg-slate-900">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-8">
           <div>
-            <h1 className="text-2xl font-extrabold text-emerald-400">
-              Learn Unique
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Administration Dashboard
-            </p>
+            <h1 className="text-2xl font-extrabold text-emerald-400">Learn Unique</h1>
+            <p className="mt-1 text-sm text-slate-400">Administration Dashboard</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -235,9 +262,7 @@ export default function AdminDashboard() {
             >
               <RefreshCw
                 size={16}
-                className={
-                  loading || usersLoading ? 'animate-spin' : ''
-                }
+                className={loading || usersLoading ? 'animate-spin' : ''}
               />
               Refresh
             </button>
@@ -255,36 +280,21 @@ export default function AdminDashboard() {
       </header>
 
       <main className="mx-auto max-w-[1600px] p-5 sm:p-8">
-        {/* Heading */}
         <section className="mb-8">
-          <p className="text-sm font-semibold tracking-wider text-emerald-400">
-            ADMINISTRATION
-          </p>
-
-          <h2 className="mt-2 text-3xl font-bold sm:text-4xl">
-            Dashboard
-          </h2>
-
+          <p className="text-sm font-semibold tracking-wider text-emerald-400">ADMINISTRATION</p>
+          <h2 className="mt-2 text-3xl font-bold sm:text-4xl">Dashboard</h2>
           <p className="mt-2 text-sm text-slate-400">
-            View platform statistics and manage registered users.
+            View platform statistics and click status to activate or suspend users.
           </p>
         </section>
 
-        {/* Statistics error */}
         {error && (
           <div className="mb-6 flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-200">
             <AlertCircle size={20} className="shrink-0" />
             <div>
-              <p className="font-semibold">
-                Statistics unavailable
-              </p>
+              <p className="font-semibold">Statistics unavailable</p>
               <p className="mt-1 text-sm">{error}</p>
-
-              <button
-                type="button"
-                onClick={fetchStats}
-                className="mt-2 text-sm underline"
-              >
+              <button type="button" onClick={fetchStats} className="mt-2 text-sm underline">
                 Try again
               </button>
             </div>
@@ -293,14 +303,10 @@ export default function AdminDashboard() {
 
         {/* Statistics cards */}
         <section className="mb-10">
-          <h3 className="mb-4 text-lg font-semibold">
-            Platform Overview
-          </h3>
-
+          <h3 className="mb-4 text-lg font-semibold">Platform Overview</h3>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {cards.map((card) => {
               const Icon = card.icon;
-
               return (
                 <div
                   key={card.title}
@@ -308,18 +314,12 @@ export default function AdminDashboard() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm text-slate-400">
-                        {card.title}
-                      </p>
-
+                      <p className="text-sm text-slate-400">{card.title}</p>
                       <p className="mt-3 text-3xl font-bold">
                         {loading ? '...' : card.value}
                       </p>
                     </div>
-
-                    <div
-                      className={`rounded-xl p-3 ${card.background}`}
-                    >
+                    <div className={`rounded-xl p-3 ${card.background}`}>
                       <Icon className={card.color} size={25} />
                     </div>
                   </div>
@@ -334,12 +334,9 @@ export default function AdminDashboard() {
           <div className="border-b border-slate-800 p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-xl font-bold">
-                  Registered Users
-                </h3>
-
+                <h3 className="text-xl font-bold">Registered Users</h3>
                 <p className="mt-1 text-sm text-slate-400">
-                  Search a user and click View Details to see the profile.
+                  Click on status to toggle Active / Deactive, or click View Details.
                 </p>
               </div>
 
@@ -355,7 +352,6 @@ export default function AdminDashboard() {
                   size={19}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
                 />
-
                 <input
                   type="text"
                   value={search}
@@ -392,12 +388,7 @@ export default function AdminDashboard() {
             {usersError && (
               <div className="m-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
                 {usersError}
-
-                <button
-                  type="button"
-                  onClick={fetchUsers}
-                  className="ml-2 underline"
-                >
+                <button type="button" onClick={fetchUsers} className="ml-2 underline">
                   Retry
                 </button>
               </div>
@@ -410,7 +401,7 @@ export default function AdminDashboard() {
                   <th className="px-5 py-4 font-medium">College</th>
                   <th className="px-5 py-4 font-medium">Location</th>
                   <th className="px-5 py-4 font-medium">Role</th>
-                  <th className="px-5 py-4 font-medium">Status</th>
+                  <th className="px-5 py-4 font-medium">Status (Click to Switch)</th>
                   <th className="px-5 py-4 font-medium">Action</th>
                 </tr>
               </thead>
@@ -418,92 +409,93 @@ export default function AdminDashboard() {
               <tbody className="divide-y divide-slate-800">
                 {usersLoading ? (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="px-5 py-12 text-center text-slate-400"
-                    >
+                    <td colSpan={6} className="px-5 py-12 text-center text-slate-400">
                       Loading users...
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="px-5 py-12 text-center text-slate-400"
-                    >
+                    <td colSpan={6} className="px-5 py-12 text-center text-slate-400">
                       No users found. Try another search.
                     </td>
                   </tr>
                 ) : (
-                  users.map((user) => (
-                    <tr
-                      key={user._id}
-                      className="transition hover:bg-slate-800/40"
-                    >
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 font-bold text-emerald-400">
-                            {(user.name || 'U')
-                              .charAt(0)
-                              .toUpperCase()}
+                  users.map((user) => {
+                    const isActive = user.isActive !== false;
+                    const isProcessing = actionLoadingId === user._id;
+
+                    return (
+                      <tr key={user._id} className="transition hover:bg-slate-800/40">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 font-bold text-emerald-400">
+                              {(user.name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-white">
+                                {user.name || 'Unnamed User'}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {user.email || 'No email'}
+                              </p>
+                            </div>
                           </div>
+                        </td>
 
-                          <div>
-                            <p className="font-semibold text-white">
-                              {user.name || 'Unnamed User'}
-                            </p>
+                        <td className="px-5 py-4 text-slate-300">
+                          {user.college || '—'}
+                        </td>
 
-                            <p className="mt-1 text-xs text-slate-400">
-                              {user.email || 'No email'}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
+                        <td className="px-5 py-4 text-slate-300">
+                          {user.location || '—'}
+                        </td>
 
-                      <td className="px-5 py-4 text-slate-300">
-                        {user.college || '—'}
-                      </td>
+                        <td className="px-5 py-4">
+                          <span
+                            className={
+                              user.role === 'admin'
+                                ? 'rounded-lg bg-purple-500/10 px-2.5 py-1 text-xs font-semibold text-purple-300'
+                                : 'rounded-lg bg-blue-500/10 px-2.5 py-1 text-xs font-semibold text-blue-300'
+                            }
+                          >
+                            {user.role || 'user'}
+                          </span>
+                        </td>
 
-                      <td className="px-5 py-4 text-slate-300">
-                        {user.location || '—'}
-                      </td>
+                        <td className="px-5 py-4">
+                          <button
+                            type="button"
+                            disabled={isProcessing || user.role === 'admin'}
+                            onClick={() => handleToggleStatus(user)}
+                            title={user.role === 'admin' ? 'Admin cannot be deactivated' : 'Click to toggle status'}
+                            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition disabled:opacity-50 ${
+                              isActive
+                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-300'
+                                : 'border-rose-500/30 bg-rose-500/10 text-rose-300 hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300'
+                            }`}
+                          >
+                            {isProcessing ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Power size={13} />
+                            )}
+                            {isActive ? 'Active' : 'Suspended'}
+                          </button>
+                        </td>
 
-                      <td className="px-5 py-4">
-                        <span
-                          className={
-                            user.role === 'admin'
-                              ? 'rounded-lg bg-purple-500/10 px-2.5 py-1 text-xs font-semibold text-purple-300'
-                              : 'rounded-lg bg-blue-500/10 px-2.5 py-1 text-xs font-semibold text-blue-300'
-                          }
-                        >
-                          {user.role || 'user'}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={
-                            getStatus(user) === 'Active'
-                              ? 'rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-300'
-                              : 'rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-300'
-                          }
-                        >
-                          {getStatus(user)}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <button
-                          type="button"
-                          onClick={() => handleViewDetails(user)}
-                          className="flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
-                        >
-                          <Eye size={16} />
-                          View Details
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                        <td className="px-5 py-4">
+                          <button
+                            type="button"
+                            onClick={() => handleViewDetails(user)}
+                            className="flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+                          >
+                            <Eye size={16} />
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -524,30 +516,43 @@ export default function AdminDashboard() {
             {/* Modal header */}
             <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-800 bg-slate-900 p-5 sm:p-6">
               <div>
-                <p className="text-xs font-semibold tracking-wider text-emerald-400">
-                  USER PROFILE
-                </p>
-
+                <p className="text-xs font-semibold tracking-wider text-emerald-400">USER PROFILE</p>
                 <h3 className="mt-1 text-xl font-bold sm:text-2xl">
                   {selectedUser.name || 'User Details'}
                 </h3>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedUser(null)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
-                aria-label="Close user details"
-              >
-                <X size={22} />
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedUser.role !== 'admin' && (
+                  <button
+                    type="button"
+                    disabled={actionLoadingId === selectedUser._id}
+                    onClick={() => handleToggleStatus(selectedUser)}
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
+                      selectedUser.isActive !== false
+                        ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30'
+                        : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30'
+                    }`}
+                  >
+                    <Power size={14} />
+                    {selectedUser.isActive !== false ? 'Deactivate Account' : 'Activate Account'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedUser(null)}
+                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  aria-label="Close user details"
+                >
+                  <X size={22} />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-6 p-5 sm:p-6">
               {detailsLoading && (
-                <p className="text-sm text-emerald-300">
-                  Loading complete profile...
-                </p>
+                <p className="text-sm text-emerald-300">Loading complete profile...</p>
               )}
 
               {detailsError && (
@@ -609,7 +614,6 @@ export default function AdminDashboard() {
 
                 <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
                   <p className="text-xs text-slate-400">Bio</p>
-
                   <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">
                     {selectedUser.bio || 'No bio available.'}
                   </p>
@@ -660,10 +664,7 @@ export default function AdminDashboard() {
 
               {/* Related activity */}
               <section>
-                <h4 className="mb-4 font-semibold">
-                  Related Activity
-                </h4>
-
+                <h4 className="mb-4 font-semibold">Related Activity</h4>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <Detail
                     label="Sent Requests"
@@ -685,16 +686,9 @@ export default function AdminDashboard() {
 
                   <Detail
                     label="Sessions"
-                    value={
-                      selectedUser.sessions?.length ?? 'Not provided'
-                    }
+                    value={selectedUser.sessions?.length ?? 'Not provided'}
                   />
                 </div>
-
-                <p className="mt-3 text-xs text-slate-500">
-                  Complete request aur session history ke liye backend
-                  API ko related records bhi return karne honge.
-                </p>
               </section>
             </div>
 
@@ -725,10 +719,8 @@ function Detail({ icon: Icon, label, value }) {
             className="mt-0.5 shrink-0 text-emerald-400"
           />
         )}
-
         <div className="min-w-0">
           <p className="text-xs text-slate-400">{label}</p>
-
           <p className="mt-1 break-words text-sm font-medium text-slate-200">
             {value === null || value === undefined || value === ''
               ? 'Not available'
@@ -746,14 +738,10 @@ function SkillList({ title, skills }) {
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-      <h5 className="mb-3 text-sm font-semibold text-slate-300">
-        {title}
-      </h5>
+      <h5 className="mb-3 text-sm font-semibold text-slate-300">{title}</h5>
 
       {items.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No skills available.
-        </p>
+        <p className="text-sm text-slate-500">No skills available.</p>
       ) : (
         <div className="flex flex-wrap gap-2">
           {items.map((skill, index) => {
