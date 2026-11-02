@@ -1,235 +1,130 @@
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
-
-// =====================================
-// 1. GENERATE JWT TOKEN
-// =====================================
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
 
 const generateToken = (id) => {
-  if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET is missing in .env");
-  }
-
-  return jwt.sign(
-    { id },
-    process.env.JWT_SECRET,
-    { expiresIn: "30d" }
-  );
+  return jwt.sign({ id }, process.env.JWT_SECRET || 'learnunique_secret_key', {
+    expiresIn: '30d',
+  });
 };
 
-// =====================================
-// 2. REGISTER USER
-// =====================================
-
-exports.registerUser = async (req, res) => {
+// POST /api/auth/register
+exports.register = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      password,
-      college,
-      location,
-      skillsToTeach,
-      skillsToLearn,
-    } = req.body;
+    let { name, email, password, role, college, location, department } = req.body;
 
-    // Required fields
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Name, email and password are required.",
+        message: 'Name, email aur password dena zaroori hai.',
       });
     }
 
-    if (
-      typeof name !== "string" ||
-      typeof email !== "string" ||
-      typeof password !== "string"
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid input format.",
-      });
-    }
+    // String conversion & sanitation
+    email = String(email).trim().toLowerCase();
+    name = String(name).trim();
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must contain at least 6 characters.",
-      });
-    }
-
-    const cleanName = name.trim();
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!cleanName || !cleanEmail) {
-      return res.status(400).json({
-        success: false,
-        message: "Name and email cannot be empty.",
-      });
-    }
-
-    // Check existing account
-    const existingUser = await User.findOne({
-      email: cleanEmail,
-    });
-
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
-        message: "This email is already registered. Please login.",
+        message: 'Yeh email pehle se registered hai.',
       });
     }
 
-    // Always create normal user.
-    // Never accept role from req.body.
     const user = await User.create({
-      name: cleanName,
-      email: cleanEmail,
+      name,
+      email,
       password,
-      college: college || "",
-      location: location || "",
-      skillsToTeach: Array.isArray(skillsToTeach)
-        ? skillsToTeach
-        : [],
-      skillsToLearn: Array.isArray(skillsToLearn)
-        ? skillsToLearn
-        : [],
-      role: "user",
+      role: ['student', 'professor'].includes(role) ? role : 'student',
+      college: college ? String(college).trim() : '',
+      location: location ? String(location).trim() : '',
+      department: department ? String(department).trim() : '',
     });
 
     const token = generateToken(user._id);
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
-      message: "Account created successfully.",
-      data: {
+      message: 'Account successfully create ho gaya!',
+      token,
+      user: {
         _id: user._id,
         name: user.name,
         email: user.email,
+        role: user.role,
         college: user.college,
         location: user.location,
-        role: user.role,
-        token,
+        rating: user.rating,
       },
     });
   } catch (error) {
-    console.error("Registration error:", error.message);
-
-    if (error.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: "This email is already registered.",
-      });
-    }
-
-    return res.status(500).json({
+    console.error('Register error:', error);
+    res.status(500).json({
       success: false,
-      message: "Unable to create account.",
+      message: error.message || 'Registration failed.',
     });
   }
 };
 
-// =====================================
-// 3. LOGIN USER / ADMIN
-// =====================================
-
-exports.loginUser = async (req, res) => {
+// POST /api/auth/login
+exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
 
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      !email.trim() ||
-      !password
-    ) {
+    if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Email and password are required.",
+        message: 'Email aur password dalein.',
       });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    // String conversion & sanitation (Crash guard)
+    email = String(email).trim().toLowerCase();
 
-    // Password is excluded by default in User.js.
-    const user = await User.findOne({
-      email: cleanEmail,
-    }).select("+password");
-
-    if (!user || !(await user.matchPassword(password))) {
+    const user = await User.findOne({ email });
+    if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message: 'Email ya password galat hai.',
       });
     }
 
-    // Block inactive accounts
     if (user.isActive === false) {
       return res.status(403).json({
         success: false,
-        message: "Your account is inactive. Contact support.",
+        message: 'Aapka account admin dwara suspend kiya gaya hai.',
+      });
+    }
+
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Email ya password galat hai.',
       });
     }
 
     const token = generateToken(user._id);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      message: "Login successful.",
-      data: {
+      message: 'Login successful!',
+      token,
+      user: {
         _id: user._id,
         name: user.name,
         email: user.email,
+        role: user.role,
         college: user.college,
         location: user.location,
-        role: user.role,
-        token,
+        rating: user.rating,
       },
     });
   } catch (error) {
-    console.error("Login error:", error.message);
-
-    return res.status(500).json({
+    console.error('Login error:', error);
+    res.status(500).json({
       success: false,
-      message: "Unable to login. Please try again.",
-    });
-  }
-};
-
-// =====================================
-// 4. GET LOGGED-IN USER
-// =====================================
-
-exports.getMe = async (req, res) => {
-  try {
-    // protect middleware must authenticate the user first.
-    const user = await User.findById(req.user._id);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found.",
-      });
-    }
-
-    if (user.isActive === false) {
-      return res.status(403).json({
-        success: false,
-        message: "Your account is inactive.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: user,
-    });
-  } catch (error) {
-    console.error("Get profile error:", error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to fetch user profile.",
+      message: error.message || 'Login failed.',
     });
   }
 };

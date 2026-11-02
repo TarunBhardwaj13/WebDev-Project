@@ -1,16 +1,18 @@
 const express = require('express');
 const router = express.Router();
-
 const {
   sendRequest,
-  getMyRequests,
-  respondToRequest
+  getSentRequests,
+  getReceivedRequests,
+  respondToRequest,
 } = require('../controllers/requestController');
-
 const { protect } = require('../middleware/authMiddleware');
 
-router.post('/', protect, sendRequest);
-router.get('/my', protect, getMyRequests);
-router.put('/:id/respond', protect, respondToRequest);
+router.use(protect); // Sabhi request routes login maangte hain
+
+router.post('/send', sendRequest);
+router.get('/sent', getSentRequests);
+router.get('/received', getReceivedRequests);
+router.patch('/:id/respond', respondToRequest);
 
 module.exports = router;

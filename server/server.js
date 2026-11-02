@@ -1,196 +1,122 @@
-console.log("--- Server starting ---");
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
 
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const dotenv = require("dotenv");
-
-dotenv.config();
-
+// 1. Initialize Express App & HTTP Server
 const app = express();
-
-// =====================================
-// 1. CORS CONFIGURATION
-// =====================================
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://localhost:3000",
-];
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error(`CORS blocked this origin: ${origin}`));
-    },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
-
-// =====================================
-// 2. BODY PARSING
-// =====================================
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// =====================================
-// 3. HEALTH CHECK
-// =====================================
-app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Learn Unique API is running!",
-    database:
-      mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
-  });
-});
-
-// =====================================
-// 4. LOAD ROUTES
-// =====================================
-function loadRoute(path, mountPath, routeName) {
-  try {
-    const routes = require(path);
-    app.use(mountPath, routes);
-    console.log(`✅ ${routeName} routes loaded`);
-  } catch (error) {
-    console.error(`❌ ${routeName} routes failed to load:`);
-    console.error(error.stack || error.message);
-    throw error;
-  }
-}
-
-// Routes
-loadRoute("./resources/resourceRoutes", "/api/resources", "Resources");
-loadRoute("./routes/authRoutes", "/api/auth", "Auth");
-loadRoute("./routes/userRoutes", "/api/users", "User");
-loadRoute("./routes/requestRoutes", "/api/requests", "Request");
-loadRoute("./routes/sessionRoutes", "/api/sessions", "Session");
-loadRoute("./routes/matchRoutes", "/api/matches", "Matches");
-loadRoute("./routes/adminRoutes", "/api/admin", "Admin");
-
-// =====================================
-// 5. UNKNOWN ROUTE HANDLER
-// =====================================
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `Route not found: ${req.method} ${req.originalUrl}`,
-  });
-});
-
-// =====================================
-// 6. GLOBAL ERROR HANDLER
-// =====================================
-app.use((err, req, res, next) => {
-  console.error("Server Error:", err.message);
-
-  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid JSON request body",
-    });
-  }
-
-  if (err.message && err.message.startsWith("CORS blocked")) {
-    return res.status(403).json({
-      success: false,
-      message: "Request origin is not allowed",
-    });
-  }
-
-  return res.status(err.status || 500).json({
-    success: false,
-    message:
-      process.env.NODE_ENV === "production"
-        ? "Internal server error"
-        : err.message || "Something went wrong",
-  });
-});
-
-// =====================================
-// 7. HTTP SERVER & SOCKET.IO SETUP
-// =====================================
 const server = http.createServer(app);
 
+// 2. Setup Socket.io
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true,
+    origin: '*',
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
   },
 });
 
-io.on("connection", (socket) => {
-  console.log("⚡ User connected to socket:", socket.id);
+// 3. Middlewares
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-  // Room Join
-  socket.on("join-room", ({ roomId, userId }) => {
-    socket.join(roomId);
-    console.log(`User ${userId || socket.id} joined meeting room: ${roomId}`);
-    socket.to(roomId).emit("user-connected", userId || socket.id);
+// 4. Import Models & Routes
+const User = require('./models/User');
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const requestRoutes = require('./routes/requestRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
-    // In-Meeting Real-time Chat
-    socket.on("send-message", (data) => {
-      io.to(roomId).emit("receive-message", data);
-    });
+// 5. Mount API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/requests', requestRoutes);
+app.use('/api/admin', adminRoutes);
 
-    // Collaborative Whiteboard Drawing
-    socket.on("draw-data", (drawData) => {
-      socket.to(roomId).emit("draw-data", drawData);
-    });
-
-    // Clear Whiteboard
-    socket.on("clear-board", () => {
-      socket.to(roomId).emit("clear-board");
-    });
-
-    // Disconnect Handler
-    socket.on("disconnect", () => {
-      console.log(`User disconnected from room: ${roomId}`);
-      socket.to(roomId).emit("user-disconnected", userId || socket.id);
-    });
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Learn Unique Backend Server is running smoothly!',
   });
 });
 
-// =====================================
-// 8. DATABASE + SERVER STARTUP
-// =====================================
-const PORT = process.env.PORT || 5000;
-
-async function startServer() {
-  const MONGO_URI = process.env.MONGO_URI;
-
-  if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing from the .env file.");
-    process.exit(1);
-  }
-
+// 6. Admin Auto-Seed Function
+const seedAdmin = async () => {
   try {
-    console.log("Connecting to MongoDB Atlas...");
-    await mongoose.connect(MONGO_URI);
-    console.log("✅ MongoDB Connected Successfully!");
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
 
-    server.listen(PORT, () => {
-      console.log("-----------------------------------");
-      console.log("🚀 Learn Unique Server Started");
-      console.log(`🚀 API & Socket Server: http://localhost:${PORT}`);
-      console.log("🌐 Frontend Origins Allowed:", allowedOrigins.join(", "));
-      console.log("✅ Admin API: /api/admin");
-      console.log("-----------------------------------");
-    });
-  } catch (error) {
-    console.error("❌ Startup failed:", error.message);
-    process.exit(1);
+    if (!adminEmail || !adminPassword) return;
+
+    const existingAdmin = await User.findOne({ email: adminEmail.toLowerCase() });
+
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      await User.create({
+        name: 'Super Admin',
+        email: adminEmail.toLowerCase(),
+        password: hashedPassword,
+        role: 'admin',
+        isActive: true,
+      });
+      console.log(`✅ Default Admin Created: ${adminEmail}`);
+    } else if (existingAdmin.role !== 'admin') {
+      existingAdmin.role = 'admin';
+      existingAdmin.isActive = true;
+      await existingAdmin.save();
+      console.log(`✅ User Promoted to Admin: ${adminEmail}`);
+    }
+  } catch (err) {
+    console.error('Admin seeding error:', err.message);
   }
-}
+};
 
-startServer();
+// 7. Socket.io Real-Time Rooms (Meeting + Whiteboard)
+io.on('connection', (socket) => {
+  console.log(`⚡ Socket Connected: ${socket.id}`);
 
+  socket.on('join-room', (roomId, userId) => {
+    socket.join(roomId);
+    socket.to(roomId).emit('user-connected', userId);
+
+    socket.on('disconnect', () => {
+      socket.to(roomId).emit('user-disconnected', userId);
+    });
+  });
+
+  // Whiteboard drawing sync
+  socket.on('draw-stroke', ({ roomId, strokeData }) => {
+    socket.to(roomId).emit('draw-stroke', strokeData);
+  });
+
+  // Clear whiteboard canvas
+  socket.on('clear-canvas', ({ roomId }) => {
+    socket.to(roomId).emit('clear-canvas');
+  });
+
+  // Meeting in-room chat
+  socket.on('send-room-message', ({ roomId, message }) => {
+    io.to(roomId).emit('receive-room-message', message);
+  });
+});
+
+// 8. MongoDB Connection & Server Start
+const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/learn_unique';
+
+mongoose
+  .connect(MONGO_URI)
+  .then(() => {
+    console.log(' MongoDB Connected Successfully');
+    seedAdmin();
+    server.listen(PORT, () => {
+      console.log(`🚀 Learn Unique Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error(' MongoDB Connection Error:', err.message);
+  });
