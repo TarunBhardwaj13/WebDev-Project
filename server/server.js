@@ -114,6 +114,7 @@ mongoose
     console.log(' MongoDB Connected Successfully');
     seedAdmin();
 
+
     server.listen(PORT, () => {
       
       console.log(`🚀 Learn Unique Server running on port ${PORT}`);
