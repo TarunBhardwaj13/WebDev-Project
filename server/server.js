@@ -109,8 +109,7 @@ const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/learn_unique';
 
 mongoose
-  .connect(MONGO_URI)
-  
+  .connect(MONGO_URI)  
   .then(() => {
     console.log(' MongoDB Connected Successfully');
     seedAdmin();
