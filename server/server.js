@@ -112,7 +112,6 @@ mongoose
   .connect(MONGO_URI)  
   .then(() => {
     console.log(' MongoDB Connected Successfully');
-    
     seedAdmin();
 
     server.listen(PORT, () => {
