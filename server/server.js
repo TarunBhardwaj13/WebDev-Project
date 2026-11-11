@@ -119,7 +119,6 @@ mongoose
       console.log(`🚀 Learn Unique Server running on port ${PORT}`);
     });
   })
-  
   .catch((err) => {
     console.error(' MongoDB Connection Error:', err.message);
   });
