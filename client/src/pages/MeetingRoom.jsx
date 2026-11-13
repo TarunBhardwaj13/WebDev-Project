@@ -263,7 +263,6 @@ export default function MeetingRoom() {
           </button>
         </form>
       </div>
-
     </div>
   );
 }
