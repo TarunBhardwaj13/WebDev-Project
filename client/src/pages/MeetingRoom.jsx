@@ -11,7 +11,6 @@ export default function MeetingRoom() {
   // Streams & Recording Refs
   const localVideoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
-
   const recordedChunksRef = useRef([]);
   
   // Whiteboard Canvas Ref
